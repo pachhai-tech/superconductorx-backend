@@ -8,11 +8,12 @@
     "deploy": "npx hardhat run ./scripts/SuperconductorX_deploy.js --network ETH_MAINNET",
     "node": "npx hardhat node",
     "test": "npx hardhat test",
-    "deploy-local": "npx hardhat run ./scripts/SuperconductorX_deploy.js --network localhost"
+    "deploy-local": "npx hardhat run ./scripts/SuperconductorX_deploy.js --network localhost",
+    "flatten": "rm -f Flattened.sol && npx hardhat flatten > Flattened.sol"
   },
   "dependencies": {
-    "dotenv": "^16.0.2",
-    "@openzeppelin/contracts": "^4.7.3"
+    "@openzeppelin/contracts": "^4.7.3",
+    "dotenv": "^16.0.2"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^1.0.2",

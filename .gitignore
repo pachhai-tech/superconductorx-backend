@@ -75,3 +75,4 @@ templates/evm/core/pages/api
 #Hardhat files
 cache
 artifacts
+Flattened.sol
