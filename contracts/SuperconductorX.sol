@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.18;
+pragma solidity ^0.8.21;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/math/Math.sol";
 
 contract SuperconductorX is ERC20, ReentrancyGuard, Ownable {
     // Maximum token cap
@@ -27,6 +28,7 @@ contract SuperconductorX is ERC20, ReentrancyGuard, Ownable {
         uint256 lastActionBlock;
     }
     mapping(address => UserState) public userStates;
+
     // Events for creating entanglement
     event EntanglementRequested(
         address indexed requester,
@@ -64,9 +66,16 @@ contract SuperconductorX is ERC20, ReentrancyGuard, Ownable {
         uint256 amount
     );
 
-    // For community minting of SCX
-    uint256 public constant SCX_PRICE_IN_ETH = 5e12; // 0.000005 ETH
-    uint256 public soldSCXTokens = 0;
+    // Tier system for community minting of SCX
+    struct Tier {
+        uint256 tokenCap;
+        uint256 tokensSold;
+        uint256 priceInETH;
+    }
+    Tier[] public tiers;
+    uint256 public currentTier;
+    mapping(uint256 => mapping(address => uint256)) public tierParticipants;
+    mapping(uint256 => address[]) public tierParticipantAddresses;
 
     // Events for community minting of SCX
     event CommunityMint(
@@ -86,15 +95,25 @@ contract SuperconductorX is ERC20, ReentrancyGuard, Ownable {
 
     constructor() ERC20("SuperconductorX", "SCX") {
         _mint(msg.sender, 100000000 * 10 ** decimals()); // 100 million initial supply
+        tiers.push(Tier(25000000e18, 0, 5e12)); // Tier 1: 25 million at 0.000005 ETH
     }
 
     // Applying an external force, similar to applying a magnetic field on a superconductor.
     // A user's energy and temperature levels are adjusted based on the days elapsed since their last interaction.
     function applyMagneticField() public {
+        require(balanceOf(msg.sender) > 1000e18, "Insufficient SCX");
+        require(
+            userStates[msg.sender].lastActionBlock != 0,
+            "Interact with the contract first"
+        );
+
         uint256 daysElapsed = (block.number -
             userStates[msg.sender].lastActionBlock) / NUM_BLOCKS_DAY;
         if (daysElapsed > 0) {
-            uint256 totalDaysReward = daysElapsed;
+            uint256 baseReward = daysElapsed;
+            uint256 tokenMultiplier = Math.sqrt(balanceOf(msg.sender) / 1e18);
+            uint256 totalDaysReward = baseReward * tokenMultiplier;
+
             userStates[msg.sender].energyLevel += totalDaysReward;
             userStates[msg.sender].temperature = userStates[msg.sender]
                 .temperature < totalDaysReward
@@ -115,7 +134,7 @@ contract SuperconductorX is ERC20, ReentrancyGuard, Ownable {
     // Requesting entanglement mimics quantum entanglement in superconductors.
     // By becoming entangled, the users' energy decreases and temperature increases.
     function requestEntanglement(address pair) public {
-        require(pair != msg.sender, "Cannot entangle with oneself");
+        require(pair != msg.sender, "Cannot entangle self");
         userStates[msg.sender].entanglementRequest = pair;
         userStates[msg.sender].energyLevel = userStates[msg.sender]
             .energyLevel < UNIVERSAL_CONSTANT_ENERGY
@@ -136,7 +155,7 @@ contract SuperconductorX is ERC20, ReentrancyGuard, Ownable {
     function acceptEntanglement(address requester) public {
         require(
             userStates[requester].entanglementRequest == msg.sender,
-            "No entanglement request from this address"
+            "No request"
         );
         userStates[requester].entangledPair = msg.sender;
         userStates[msg.sender].entangledPair = requester;
@@ -205,7 +224,7 @@ contract SuperconductorX is ERC20, ReentrancyGuard, Ownable {
     }
 
     // Represents quantum tunneling. Tokens are locked and then either successfully transferred or returned based on a probabilistic outcome.
-    function quantumTunnelTransfer(
+    function initiateQuantumTunnel(
         address to,
         uint256 amount
     ) external nonReentrant {
@@ -233,7 +252,7 @@ contract SuperconductorX is ERC20, ReentrancyGuard, Ownable {
     // Represents the execution of a quantum tunneling event in the contract.
     // A tunnel is initiated by a user, and this function determines whether the tunneling is successful or not.
     // If users are entangled, the probability of success increases, mirroring the probabilistic nature of quantum mechanics.
-    function executeTunnel() external nonReentrant {
+    function completeQuantumTunnel() external nonReentrant {
         require(
             tunnelTargetBlock[msg.sender] > 0,
             "No tunnel initiated by this user"
@@ -346,22 +365,67 @@ contract SuperconductorX is ERC20, ReentrancyGuard, Ownable {
 
     // Users can mint tokens in exchange for ETH.
     function communityMint() external payable nonReentrant {
-        uint256 amountToMint = (msg.value / SCX_PRICE_IN_ETH) *
-            10 ** decimals();
-        require(amountToMint > 0, "Not enough ETH sent");
-        require(
-            balanceOf(address(this)) >= amountToMint,
-            "The contract doesn't have enough SCX to be minted. Please try minting by sending a lower amount of ETH."
-        );
-        require(
-            soldSCXTokens + amountToMint <= 75000000 * 10 ** decimals(),
-            "Exceeds available SCX tokens for community minting"
+        require(currentTier < tiers.length, "All tiers are exhausted");
+
+        Tier storage tier = tiers[currentTier];
+
+        uint256 maxTokensAvailable = Math.min(
+            balanceOf(address(this)),
+            tier.tokenCap - tier.tokensSold
         );
 
-        soldSCXTokens += amountToMint;
+        uint256 amountToMint = (msg.value / tier.priceInETH) * 10 ** decimals();
+        if (amountToMint > maxTokensAvailable) {
+            amountToMint = maxTokensAvailable;
+        }
+
+        require(
+            amountToMint > 0,
+            "Not enough ETH sent or no tokens available for minting"
+        );
+
+        uint256 ethRequired = (amountToMint * tier.priceInETH) /
+            10 ** decimals();
+        uint256 ethToRefund = msg.value - ethRequired;
+
+        tier.tokensSold += amountToMint;
         _transfer(address(this), msg.sender, amountToMint);
 
-        emit CommunityMint(msg.sender, amountToMint, msg.value);
+        // Record the participant's purchase
+        if (tierParticipants[currentTier][msg.sender] == 0) {
+            tierParticipantAddresses[currentTier].push(msg.sender);
+        }
+        tierParticipants[currentTier][msg.sender] += amountToMint;
+
+        if (ethToRefund > 0) {
+            payable(msg.sender).transfer(ethToRefund);
+        }
+
+        // Move to the next tier if the current tier is exhausted
+        if (tier.tokensSold == tier.tokenCap) {
+            currentTier++;
+        }
+
+        emit CommunityMint(msg.sender, amountToMint, ethRequired);
+    }
+
+    // Get the number of participants in a specific tier
+    function getTierParticipantCount(
+        uint256 tierIndex
+    ) external view returns (uint256) {
+        return tierParticipantAddresses[tierIndex].length;
+    }
+
+    // Get the participant address and their purchase amount for a specific tier and index
+    function getTierParticipant(
+        uint256 tierIndex,
+        uint256 participantIndex
+    ) external view returns (address, uint256) {
+        address participant = tierParticipantAddresses[tierIndex][
+            participantIndex
+        ];
+        uint256 amount = tierParticipants[tierIndex][participant];
+        return (participant, amount);
     }
 
     // Contract owner can withdraw all the SCX tokens.

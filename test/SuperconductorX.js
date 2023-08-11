@@ -82,16 +82,48 @@ describe('SuperconductorX', function () {
   })
 
   describe('applyMagneticField', function () {
-    it('Should adjust energy and temperature based on days elapsed', async function () {
+    it('Should fail because the user needs to interact with the contract first', async function () {
       const { superconductorX, owner } = await loadFixture(deployFixture)
 
       // Instantly mine 5761 blocks(1 day = 1 energy gained)
       await ethers.provider.send('hardhat_mine', ['0x1681'])
-      await superconductorX.applyMagneticField()
+      await expect(superconductorX.applyMagneticField()).to.be.revertedWith(
+        'Interact with the contract first'
+      )
+    })
 
-      const userState = await superconductorX.getUserState(owner.address)
+    it('Need to hold at least 1000 SCX before calling this function', async function () {
+      const { superconductorX, owner, addr1 } = await loadFixture(deployFixture)
 
-      expect(userState.energyLevel).to.equal(1)
+      // Get some SCX from owner first
+      await superconductorX.transfer(addr1.address, 1)
+
+      // Interact with the contract before calling this function
+      await superconductorX.connect(addr1).transfer(owner.address, 1)
+
+      // Instantly mine 5761 blocks(1 day = 1 energy gained)
+      await ethers.provider.send('hardhat_mine', ['0x1681'])
+      await expect(
+        superconductorX.connect(addr1).applyMagneticField()
+      ).to.be.revertedWith('Insufficient SCX')
+    })
+
+    it('Should adjust energy and temperature based on days elapsed', async function () {
+      const { superconductorX, owner, addr1 } = await loadFixture(deployFixture)
+
+      // Get some SCX from owner first
+      await superconductorX.transfer(addr1.address, 1001e18)
+
+      // Interact with the contract before calling this function
+      await superconductorX.connect(addr1).transfer(owner.address, 1001e18)
+
+      // Instantly mine 5761 blocks(1 day = 1 energy gained)
+      await ethers.provider.send('hardhat_mine', ['0x1681'])
+      await superconductorX.connect(addr1).applyMagneticField()
+
+      const userState = await superconductorX.getUserState(addr1.address)
+
+      expect(userState.energyLevel).to.equal(100)
       expect(userState.temperature).to.equal(0)
     })
   })
